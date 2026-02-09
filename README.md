@@ -33,6 +33,9 @@ VS Code (ou outro editor de sua preferência)
 Conexão com a Internet
 Necessária para buscar os países da API na primeira execução
 
+Link do codigo:
+https://github.com/BielCastNow/world_guessing_game-/blob/main/Codigo.poo
+
 🔧 Passo a Passo de Instalação
 1️⃣ Clonar ou baixar o projeto
 Abra o terminal na pasta onde deseja salvar o projeto e execute:
