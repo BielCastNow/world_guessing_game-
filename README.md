@@ -37,7 +37,7 @@ Necessária para buscar os países da API na primeira execução
 1️⃣ Clonar ou baixar o projeto
 Abra o terminal na pasta onde deseja salvar o projeto e execute:
 
-git clone https://github.com/lkaua-dev/World-Guessing-Game.git
+
 2️⃣ Instalar dependências
 A maioria das bibliotecas já vem com o Python. Você só precisa instalar a biblioteca de requisições:
 
