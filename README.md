@@ -1,411 +1,52 @@
-# world_guessing_game-
-
-import requests
-import random
-import unicodedata
-import sqlite3
-import tkinter as tk
-from tkinter import messagebox
-from datetime import datetime
-
-
-# =========================================================
-# FUNÇÕES UTILITÁRIAS
-# =========================================================
-
-def normalizar_texto(texto):
-    """
-    Normaliza um texto removendo acentos, convertendo para
-    letras minúsculas e eliminando espaços extras.
-
-    Args:
-        texto (str): Texto original digitado pelo usuário.
-
-    Returns:
-        str: Texto normalizado.
-    """
-    if not texto:
-        return ""
-
-    nfkd = unicodedata.normalize('NFKD', str(texto))
-    sem_acento = "".join(
-        [c for c in nfkd if not unicodedata.combining(c)]
-    )
-    return sem_acento.lower().strip()
-
-
-# =========================================================
-# INTEGRAÇÃO COM API REST COUNTRIES
-# =========================================================
-
-class RestCountriesAPI:
-    """
-    Classe responsável por buscar dados dos países
-    através da API Rest Countries.
-    """
-
-    def __init__(self):
-        """
-        Define a URL base da API com os campos necessários.
-        """
-        self.url_base = (
-            "https://restcountries.com/v3.1/all?"
-            "fields=name,capital,region,translations"
-        )
-
-    def buscar_paises(self):
-        """
-        Realiza a requisição HTTP para obter a lista de países.
-
-        Returns:
-            list: Lista de países em formato JSON ou lista vazia em caso de erro.
-        """
-        try:
-            response = requests.get(self.url_base)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            print(f"❌ Erro de conexão: {e}")
-            return []
-
-
-# =========================================================
-# BANCO DE DADOS (SQLite)
-# =========================================================
-
-class BancoDados:
-    """
-    Classe responsável por gerenciar o banco de dados SQLite
-    utilizado para armazenar o ranking do jogo.
-    """
-
-    def __init__(self):
-        """
-        Cria a conexão com o banco e a tabela de ranking,
-        caso ainda não exista.
-        """
-        self.con = sqlite3.connect("ranking.db")
-        self.cursor = self.con.cursor()
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS ranking (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                jogador TEXT,
-                pontuacao INTEGER,
-                data_hora TEXT
-            )
-        """)
-        self.con.commit()
-
-    def salvar(self, jogador, pontuacao):
-        """
-        Salva a pontuação de um jogador no banco de dados.
-
-        Args:
-            jogador (str): Nome do jogador.
-            pontuacao (int): Pontuação final obtida.
-        """
-        data_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
-        self.cursor.execute(
-            "INSERT INTO ranking (jogador, pontuacao, data_hora) VALUES (?, ?, ?)",
-            (jogador, pontuacao, data_hora)
-        )
-        self.con.commit()
-
-    def listar_top5(self):
-        """
-        Retorna os 5 melhores jogadores ordenados por pontuação.
-
-        Returns:
-            list: Lista com os 5 melhores registros.
-        """
-        self.cursor.execute("""
-            SELECT jogador, pontuacao, data_hora
-            FROM ranking
-            ORDER BY pontuacao DESC
-            LIMIT 5
-        """)
-        return self.cursor.fetchall()
-
-
-# =========================================================
-# LÓGICA DO JOGO
-# =========================================================
-
-class GameLogic:
-    """
-    Classe que controla as regras do jogo, pontuação,
-    rodadas e verificação das respostas.
-    """
-
-    def __init__(self, nome_jogador):
-        """
-        Inicializa o jogo para um jogador.
-
-        Args:
-            nome_jogador (str): Nome do jogador.
-        """
-        self.jogador = nome_jogador
-        self.pontuacao = 0
-        self.api = RestCountriesAPI()
-        self.lista_paises = self.api.buscar_paises()
-        self.pais_atual = None
-        self.rodada = 0
-        self.max_rodadas = 5
-
-    def sortear_pais(self):
-        """
-        Sorteia um país aleatório da lista disponível.
-
-        Returns:
-            dict: Dados do país sorteado.
-        """
-        if self.lista_paises:
-            self.pais_atual = random.choice(self.lista_paises)
-            self.rodada += 1
-            return self.pais_atual
-        return None
-
-    def verificar_acerto(self, resposta_usuario):
-        """
-        Verifica se a resposta do usuário corresponde ao país correto.
-
-        Args:
-            resposta_usuario (str): Resposta digitada pelo jogador.
-
-        Returns:
-            tuple: (bool, str) indicando se acertou e o nome correto do país.
-        """
-        nomes_validos = []
-
-        # Nome do país em português, se existir
-        try:
-            nomes_validos.append(
-                normalizar_texto(
-                    self.pais_atual['translations']['por']['common']
-                )
-            )
-        except:
-            pass
-
-        # Nome do país em inglês
-        nomes_validos.append(
-            normalizar_texto(self.pais_atual['name']['common'])
-        )
-
-        resposta_norm = normalizar_texto(resposta_usuario)
-
-        nome_exibicao = self.pais_atual['translations'].get(
-            'por', {}
-        ).get(
-            'common',
-            self.pais_atual['name']['common']
-        )
-
-        if resposta_norm in nomes_validos:
-            self.pontuacao += 10
-            return True, nome_exibicao
-
-        return False, nome_exibicao
-
-
-# =========================================================
-# INTERFACE GRÁFICA (Tkinter)
-# =========================================================
-
-class JogoCapitaisApp:
-    """
-    Classe responsável pela interface gráfica do jogo
-    utilizando Tkinter.
-    """
-
-    def __init__(self, root):
-        """
-        Inicializa a janela principal e os frames da aplicação.
-        """
-        self.root = root
-        self.root.title("Quiz das Capitais")
-        self.root.geometry("400x400")
-
-        self.db = BancoDados()
-        self.game = None
-
-        self.frame_login = tk.Frame(root)
-        self.frame_jogo = tk.Frame(root)
-        self.frame_ranking = tk.Frame(root)
-
-        self.setup_login()
-        self.frame_login.pack(expand=True, fill="both")
-
-    def setup_login(self):
-        """Tela inicial para entrada do nome do jogador."""
-        tk.Label(
-            self.frame_login,
-            text="DESAFIO MUNDIAL",
-            font=("Arial", 20, "bold")
-        ).pack(pady=40)
-
-        tk.Label(
-            self.frame_login,
-            text="Digite seu nome:"
-        ).pack()
-
-        self.entry_nome = tk.Entry(
-            self.frame_login,
-            font=("Arial", 14)
-        )
-        self.entry_nome.pack(pady=10)
-
-        tk.Button(
-            self.frame_login,
-            text="INICIAR JOGO",
-            command=self.iniciar_partida,
-            bg="green",
-            fg="white"
-        ).pack(pady=20)
-
-    def iniciar_partida(self):
-        """Inicia uma nova partida."""
-        nome = self.entry_nome.get()
-
-        if not nome:
-            messagebox.showwarning("Atenção", "Digite seu nome!")
-            return
-
-        self.game = GameLogic(nome)
-
-        if not self.game.lista_paises:
-            messagebox.showerror("Erro", "Erro ao carregar países!")
-            return
-
-        self.frame_login.pack_forget()
-        self.setup_jogo()
-        self.frame_jogo.pack(expand=True, fill="both")
-        self.proxima_rodada()
-
-    def setup_jogo(self):
-        """Configura a tela principal do jogo."""
-        for w in self.frame_jogo.winfo_children():
-            w.destroy()
-
-        self.lbl_info = tk.Label(
-            self.frame_jogo,
-            text="",
-            font=("Arial", 12, "bold"),
-            bg="#ddd"
-        )
-        self.lbl_info.pack(fill="x")
-
-        self.lbl_capital = tk.Label(
-            self.frame_jogo,
-            text="",
-            font=("Arial", 18, "bold"),
-            fg="blue"
-        )
-        self.lbl_capital.pack(pady=20)
-
-        self.lbl_regiao = tk.Label(
-            self.frame_jogo,
-            text="",
-            font=("Arial", 12)
-        )
-        self.lbl_regiao.pack(pady=5)
-
-        self.entry_resposta = tk.Entry(
-            self.frame_jogo,
-            font=("Arial", 14)
-        )
-        self.entry_resposta.pack(pady=20)
-        self.entry_resposta.bind(
-            '<Return>',
-            lambda e: self.verificar_resposta()
-        )
-
-        tk.Button(
-            self.frame_jogo,
-            text="RESPONDER",
-            command=self.verificar_resposta,
-            bg="#2196F3",
-            fg="white"
-        ).pack()
-
-    def proxima_rodada(self):
-        """Avança para a próxima rodada do jogo."""
-        if self.game.rodada >= self.game.max_rodadas:
-            self.finalizar_jogo()
-            return
-
-        pais = self.game.sortear_pais()
-
-        self.lbl_info.config(
-            text=f"Rodada {self.game.rodada}/{self.game.max_rodadas} "
-                 f"| Pontos: {self.game.pontuacao}"
-        )
-
-        capital = pais.get('capital', ['Sem Capital'])[0]
-        regiao = pais.get('region', 'Desconhecida')
-
-        self.lbl_capital.config(text=f"Capital: {capital}")
-        self.lbl_regiao.config(text=f"Continente: {regiao}")
-
-        self.entry_resposta.delete(0, tk.END)
-        self.entry_resposta.focus()
-
-    def verificar_resposta(self):
-        """Verifica a resposta do usuário."""
-        resposta = self.entry_resposta.get()
-        acertou, correto = self.game.verificar_acerto(resposta)
-
-        if acertou:
-            messagebox.showinfo("Boa!", f"Acertou! É {correto}")
-        else:
-            messagebox.showerror("Putz!", f"Errou! Era {correto}")
-
-        self.proxima_rodada()
-
-    def finalizar_jogo(self):
-        """Finaliza o jogo e salva o ranking."""
-        self.db.salvar(
-            self.game.jogador,
-            self.game.pontuacao
-        )
-        self.frame_jogo.pack_forget()
-        self.setup_ranking()
-        self.frame_ranking.pack(expand=True, fill="both")
-
-    def setup_ranking(self):
-        """Exibe o ranking Top 5."""
-        for w in self.frame_ranking.winfo_children():
-            w.destroy()
-
-        tk.Label(
-            self.frame_ranking,
-            text="RANKING TOP 5",
-            font=("Arial", 18, "bold")
-        ).pack(pady=20)
-
-        for jogador, pontos, data in self.db.listar_top5():
-            tk.Label(
-                self.frame_ranking,
-                text=f"{jogador} - {pontos} pts ({data})"
-            ).pack()
-
-        tk.Button(
-            self.frame_ranking,
-            text="VOLTAR",
-            command=self.reiniciar
-        ).pack(pady=20)
-
-    def reiniciar(self):
-        """Retorna à tela inicial."""
-        self.frame_ranking.pack_forget()
-        self.frame_login.pack(expand=True, fill="both")
-
-
-# =========================================================
-# EXECUÇÃO DO PROGRAMA
-# =========================================================
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = JogoCapitaisApp(root)
-    root.mainloop()
+🌎 World Guessing Game – Ranking Edition
+Projeto educacional desenvolvido em Python, aplicando Programação Orientada a Objetos (POO) e conceitos de arquitetura MVC.
+O jogo utiliza a API REST Countries para desafiar o jogador a descobrir países a partir de dicas como Capital e Região, acumulando pontos e salvando os melhores resultados em um ranking global.
+
+🎯 Objetivo do Jogo
+O jogador deve adivinhar corretamente o país com base nas informações exibidas a cada rodada.
+A cada acerto, pontos são somados e, ao final do jogo, a pontuação é salva em um ranking Top 5.
+
+🚀 Tecnologias Utilizadas
+Linguagem: Python 3.13+
+Interface Gráfica: Tkinter (nativo do Python)
+Banco de Dados: SQLite3
+Integração com API: Requests (REST Countries API)
+Normalização de Texto: Unicodedata
+Lógica e Sorteio: Random
+Persistência de Dados: Datetime + SQLite
+🧠 Conceitos Aplicados
+Programação Orientada a Objetos (POO)
+Separação de responsabilidades (MVC)
+Consumo de API REST
+Interface gráfica com Tkinter
+Manipulação de banco de dados SQLite
+Normalização de strings (acentos e capitalização)
+Ranking persistente com data e hora
+📋 Pré-requisitos
+Antes de começar, você precisa ter instalado na sua máquina:
+
+Python 3.x
+⚠️ Durante a instalação, marque a opção "Add Python to PATH"
+
+VS Code (ou outro editor de sua preferência)
+
+Conexão com a Internet
+Necessária para buscar os países da API na primeira execução
+
+🔧 Passo a Passo de Instalação
+1️⃣ Clonar ou baixar o projeto
+Abra o terminal na pasta onde deseja salvar o projeto e execute:
+
+git clone https://github.com/lkaua-dev/World-Guessing-Game.git
+2️⃣ Instalar dependências
+A maioria das bibliotecas já vem com o Python. Você só precisa instalar a biblioteca de requisições:
+
+pip install requests
+▶️ Como Executar o Projeto
+Abra o terminal na pasta raiz do projeto
+
+Acesse o diretório correto:
+
+cd World-Guessing-Game
+Execute o arquivo principal:
+python main.py
